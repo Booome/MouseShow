@@ -95,7 +95,7 @@ min_step = 2.0      # ignore movements smaller than this (px)
 Working today: overlay, ripples, drag trails, config file, CLI, `doctor`.
 Not started: tray / GUI (likely Tauri), hotkeys, cursor highlight ring, "only while recording".
 
-`cargo build --release` → `target/release/mouseshow.exe` (single self-contained binary, ~1 MB).
+`cargo build --release` → `target/release/mouseshow.exe` (single self-contained binary, 1.2 MB).
 
 ## License
 
