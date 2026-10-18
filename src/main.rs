@@ -208,8 +208,8 @@ fn run(cfg: &Config, duration: f64) -> Result<(), Box<dyn Error>> {
     let mut prev_dirty: Option<Rect> = None;
     let mut next_frame = Instant::now();
 
-    // Handshake for scripts: once this line appears, the overlay is alive and
-    // the recorder can start.
+    // Handshake: once this line appears, the overlay is alive, so an external
+    // process can wait for it before it starts capturing.
     println!(
         "mouseshow: ready  overlay {vw}x{vh} at ({vx},{vy})  {} fps  scale {:.2}",
         cfg.general.fps, cfg.general.scale
