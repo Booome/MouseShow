@@ -1,0 +1,32 @@
+[package]
+name = "mouseshow"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Mouse click ripples and drag trails drawn on the desktop, captured by any screen recorder"
+license = "MIT"
+repository = "https://github.com/Booome/MouseShow"
+readme = "README.md"
+keywords = ["screen-recording", "mouse", "overlay", "windows", "tutorial"]
+categories = ["gui", "multimedia::video"]
+
+[dependencies]
+tiny-skia = "0.12.0"
+
+[dependencies.windows]
+version = "0.62.2"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_Graphics_Dwm",
+]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = true
