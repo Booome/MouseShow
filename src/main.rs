@@ -1,32 +1,17 @@
-//! MouseShow — click ripples and drag trails drawn straight onto the desktop.
+//! `mouseshow` — command-line front end.
 //!
-//! Drawing on the desktop (instead of compositing marks in post) means any
-//! recorder picks the marks up with the pixels: no timestamp mapping, no drift.
-
-mod config;
-mod input;
-mod overlay;
-mod scene;
+//! The overlay itself lives in the library; this binary only parses arguments
+//! and keeps the process alive for as long as the user asked.
 
 use std::error::Error;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
-use tiny_skia::{Color, Pixmap};
-use windows::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetSystemMetrics, MSG, PM_REMOVE, PeekMessageW, SM_CXVIRTUALSCREEN,
-    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, TranslateMessage,
-};
 
-use crate::config::Config;
-use crate::overlay::{Overlay, Rect};
-use crate::scene::{Scene, Style};
+use mouseshow::config::Config;
+use mouseshow::{Marks, probe_overlay};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -115,12 +100,7 @@ impl Overrides {
 
 fn main() {
     let cli = Cli::parse();
-
-    let path = cli
-        .overrides
-        .config
-        .clone()
-        .unwrap_or_else(Config::path);
+    let path = cli.overrides.config.clone().unwrap_or_else(Config::path);
 
     let mut cfg = match Config::load(&path) {
         Ok(c) => c,
@@ -138,7 +118,7 @@ fn main() {
                 Some(Command::Run { duration }) => duration,
                 _ => 0.0,
             };
-            run(&cfg, duration)
+            run(cfg, duration)
         }
         Some(Command::Init) => cmd_init(&cfg, &path),
         Some(Command::Config) => {
@@ -154,162 +134,24 @@ fn main() {
     }
 }
 
-fn virtual_screen() -> (i32, i32, u32, u32) {
-    unsafe {
-        (
-            GetSystemMetrics(SM_XVIRTUALSCREEN),
-            GetSystemMetrics(SM_YVIRTUALSCREEN),
-            GetSystemMetrics(SM_CXVIRTUALSCREEN) as u32,
-            GetSystemMetrics(SM_CYVIRTUALSCREEN) as u32,
-        )
-    }
-}
+fn run(cfg: Config, duration: f64) -> Result<(), Box<dyn Error>> {
+    let fps = cfg.general.fps;
+    let marks = Marks::start(cfg)?;
 
-/// The desktop area excluding the taskbar.
-///
-/// Why this matters: the overlay is a topmost layered window. If it covers the
-/// taskbar, Windows turns off the taskbar's acrylic/transparency for as long as
-/// the window is visible — the bar flashes grey every time a ripple is drawn.
-/// Keeping the overlay inside the work area avoids overlapping the taskbar
-/// entirely. The cost: marks are not drawn on the taskbar itself.
-fn work_area() -> Option<(i32, i32, u32, u32)> {
-    use windows::Win32::Foundation::RECT;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
-    };
-
-    let mut r = RECT::default();
-    unsafe {
-        SystemParametersInfoW(
-            SPI_GETWORKAREA,
-            0,
-            Some(&mut r as *mut RECT as *mut core::ffi::c_void),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        )
-    }
-    .ok()?;
-    let w = (r.right - r.left).max(0) as u32;
-    let h = (r.bottom - r.top).max(0) as u32;
-    if w == 0 || h == 0 {
-        return None;
-    }
-    Some((r.left, r.top, w, h))
-}
-
-fn pump_messages() {
-    let mut msg = MSG::default();
-    unsafe {
-        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-}
-
-fn clear_rect(pixmap: &mut Pixmap, r: Rect) {
-    let stride = pixmap.width() as usize * 4;
-    let height = pixmap.height() as usize;
-    let data = pixmap.data_mut();
-    for y in r.y as usize..r.bottom() as usize {
-        if y >= height {
-            break;
-        }
-        let off = y * stride + r.x as usize * 4;
-        data[off..off + r.w as usize * 4].fill(0);
-    }
-}
-
-fn run(cfg: &Config, duration: f64) -> Result<(), Box<dyn Error>> {
-    unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    }
-
-    let (vx, vy, vw, vh) = virtual_screen();
-    if vw == 0 || vh == 0 {
-        return Err("no display detected".into());
-    }
-
-    // Stay inside the work area so the overlay never sits on top of the taskbar.
-    let (ox, oy, ow, oh) = match work_area() {
-        Some((wx, wy, ww, wh))
-            if wx >= vx && wy >= vy && wx + ww as i32 <= vx + vw as i32 && wy + wh as i32 <= vy + vh as i32 =>
-        {
-            (wx, wy, ww, wh)
-        }
-        _ => (vx, vy, vw, vh),
-    };
-
-    let mut ov = Overlay::new((ox, oy), ow, oh)?;
-    let mut pixmap = Pixmap::new(ow, oh).ok_or("failed to allocate the pixel buffer")?;
-    let mut scene = Scene::new(Style::from_config(cfg));
-    let events = input::spawn();
-
-    let frame = Duration::from_secs_f32(1.0 / cfg.general.fps as f32);
-    let start = Instant::now();
-    let mut prev_dirty: Option<Rect> = None;
-    let mut next_frame = Instant::now();
-
-    // Handshake: once this line appears, the overlay is alive, so an external
-    // process can wait for it before it starts capturing.
     println!(
-        "mouseshow: ready  overlay {ow}x{oh} at ({ox},{oy})  {} fps  scale {:.2}",
-        cfg.general.fps, cfg.general.scale
+        "mouseshow: ready  overlay {}x{} at ({},{})  {fps} fps",
+        marks.info.w, marks.info.h, marks.info.x, marks.info.y
     );
-    let _ = std::io::stdout().flush();
 
-    loop {
-        pump_messages();
-
-        let now = Instant::now();
-        while let Ok(ev) = events.try_recv() {
-            scene.handle(ev, (ox, oy), now);
-        }
-        scene.tick(now);
-
-        let current = scene.bounds().and_then(|r| r.clip(ow, oh));
-
-        // Coming back from idle: the compositor has no cached content, so wipe the
-        // whole buffer once and do a single full upload. While idle we must NOT
-        // touch the buffer — clearing 3440x1440 every frame cost more than drawing.
-        let waking = !ov.is_visible() && current.is_some();
-        if waking {
-            pixmap.fill(Color::TRANSPARENT);
-            prev_dirty = None;
-        }
-
-        match Rect::union(prev_dirty, current) {
-            Some(dirty) => {
-                if let Some(d) = dirty.clip(ow, oh) {
-                    clear_rect(&mut pixmap, d);
-                    scene.render(&mut pixmap, now);
-                    if waking {
-                        ov.present_all(&pixmap)?;
-                    } else {
-                        ov.present_rect(&pixmap, d)?;
-                    }
-                    prev_dirty = current;
-                }
-            }
-            None => {
-                ov.hide();
-                prev_dirty = None;
-            }
-        }
-
-        if duration > 0.0 && start.elapsed().as_secs_f64() >= duration {
-            break;
-        }
-
-        next_frame += frame;
-        let now = Instant::now();
-        if next_frame > now {
-            std::thread::sleep(next_frame - now);
-        } else {
-            next_frame = now;
+    if duration > 0.0 {
+        std::thread::sleep(Duration::from_secs_f64(duration));
+        marks.stop();
+    } else {
+        // Ctrl+C ends the process; there is no state to flush.
+        loop {
+            std::thread::park();
         }
     }
-
-    ov.hide();
     Ok(())
 }
 
@@ -327,9 +169,11 @@ fn cmd_init(cfg: &Config, path: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 fn cmd_doctor(cfg: &Config, path: &Path) -> Result<(), Box<dyn Error>> {
-    let (vx, vy, vw, vh) = virtual_screen();
     println!("mouseshow {}", env!("CARGO_PKG_VERSION"));
-    println!("virtual screen : {vw}x{vh} at ({vx},{vy})");
+    match mouseshow::work_area() {
+        Some((x, y, w, h)) => println!("work area      : {w}x{h} at ({x},{y})"),
+        None => println!("work area      : (unknown)"),
+    }
     println!("config         : {}", path.display());
     println!("config exists  : {}", path.exists());
     println!("fps            : {}", cfg.general.fps);
@@ -346,10 +190,8 @@ fn cmd_doctor(cfg: &Config, path: &Path) -> Result<(), Box<dyn Error>> {
         "colors         : left {}  right {}  middle {}",
         cfg.colors.left, cfg.colors.right, cfg.colors.middle
     );
-
-    // Can we actually create the overlay?
-    match Overlay::new((vx, vy), vw.max(1), vh.max(1)) {
-        Ok(_) => println!("overlay        : ok"),
+    match probe_overlay() {
+        Ok(()) => println!("overlay        : ok"),
         Err(e) => println!("overlay        : FAILED ({e})"),
     }
     Ok(())
