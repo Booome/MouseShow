@@ -78,8 +78,8 @@ impl Default for Ripple {
     fn default() -> Self {
         Self {
             enabled: true,
-            from_radius: 9.0,
-            to_radius: 42.0,
+            from_radius: 4.5,
+            to_radius: 21.0,
             duration_ms: 460.0,
             width: 3.0,
             fill_alpha: 0.10,

@@ -65,8 +65,8 @@ middle = "#FF5C8A"
 
 [ripple]
 enabled = true
-from_radius = 9.0
-to_radius = 42.0
+from_radius = 4.5
+to_radius = 21.0
 duration_ms = 460.0
 width = 3.0
 fill_alpha = 0.10   # soft fill inside the ring; 0.0 = ring only
@@ -94,7 +94,8 @@ min_step = 2.0      # ignore movements smaller than this (px)
 
 - Windows only.
 - Overlays do not appear over exclusive-fullscreen applications or hardware overlays.
-- The overlay covers the whole virtual screen; marks are drawn wherever the cursor is.
+- The overlay covers the work area, not the taskbar: marks are not drawn on the taskbar itself.
+  Covering it would make Windows drop the taskbar's transparency for as long as a mark is on screen.
 
 ## License
 

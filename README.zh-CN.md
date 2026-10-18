@@ -62,8 +62,8 @@ middle = "#FF5C8A"
 
 [ripple]
 enabled = true
-from_radius = 9.0
-to_radius = 42.0
+from_radius = 4.5
+to_radius = 21.0
 duration_ms = 460.0
 width = 3.0
 fill_alpha = 0.10   # 圆环内部的淡填充；0.0 = 只有描边
@@ -90,7 +90,8 @@ min_step = 2.0      # 位移小于该值（像素）不记点，避免抖动
 
 - 仅支持 Windows。
 - 独占全屏应用和硬件叠加层上方不会显示覆盖层。
-- 覆盖层铺满整个虚拟屏幕，光标在哪就在哪画。
+- 覆盖层只铺**工作区**，不压在任务栏上 —— 因此任务栏上不会画标记。
+  压在任务栏上会让 Windows 在标记显示期间关掉任务栏的透明效果（表现为整条变灰）。
 
 ## 许可证
 

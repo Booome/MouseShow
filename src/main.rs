@@ -165,6 +165,37 @@ fn virtual_screen() -> (i32, i32, u32, u32) {
     }
 }
 
+/// The desktop area excluding the taskbar.
+///
+/// Why this matters: the overlay is a topmost layered window. If it covers the
+/// taskbar, Windows turns off the taskbar's acrylic/transparency for as long as
+/// the window is visible — the bar flashes grey every time a ripple is drawn.
+/// Keeping the overlay inside the work area avoids overlapping the taskbar
+/// entirely. The cost: marks are not drawn on the taskbar itself.
+fn work_area() -> Option<(i32, i32, u32, u32)> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+
+    let mut r = RECT::default();
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some(&mut r as *mut RECT as *mut core::ffi::c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .ok()?;
+    let w = (r.right - r.left).max(0) as u32;
+    let h = (r.bottom - r.top).max(0) as u32;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    Some((r.left, r.top, w, h))
+}
+
 fn pump_messages() {
     let mut msg = MSG::default();
     unsafe {
@@ -198,8 +229,18 @@ fn run(cfg: &Config, duration: f64) -> Result<(), Box<dyn Error>> {
         return Err("no display detected".into());
     }
 
-    let mut ov = Overlay::new((vx, vy), vw, vh)?;
-    let mut pixmap = Pixmap::new(vw, vh).ok_or("failed to allocate the pixel buffer")?;
+    // Stay inside the work area so the overlay never sits on top of the taskbar.
+    let (ox, oy, ow, oh) = match work_area() {
+        Some((wx, wy, ww, wh))
+            if wx >= vx && wy >= vy && wx + ww as i32 <= vx + vw as i32 && wy + wh as i32 <= vy + vh as i32 =>
+        {
+            (wx, wy, ww, wh)
+        }
+        _ => (vx, vy, vw, vh),
+    };
+
+    let mut ov = Overlay::new((ox, oy), ow, oh)?;
+    let mut pixmap = Pixmap::new(ow, oh).ok_or("failed to allocate the pixel buffer")?;
     let mut scene = Scene::new(Style::from_config(cfg));
     let events = input::spawn();
 
@@ -211,7 +252,7 @@ fn run(cfg: &Config, duration: f64) -> Result<(), Box<dyn Error>> {
     // Handshake: once this line appears, the overlay is alive, so an external
     // process can wait for it before it starts capturing.
     println!(
-        "mouseshow: ready  overlay {vw}x{vh} at ({vx},{vy})  {} fps  scale {:.2}",
+        "mouseshow: ready  overlay {ow}x{oh} at ({ox},{oy})  {} fps  scale {:.2}",
         cfg.general.fps, cfg.general.scale
     );
     let _ = std::io::stdout().flush();
@@ -221,11 +262,11 @@ fn run(cfg: &Config, duration: f64) -> Result<(), Box<dyn Error>> {
 
         let now = Instant::now();
         while let Ok(ev) = events.try_recv() {
-            scene.handle(ev, (vx, vy), now);
+            scene.handle(ev, (ox, oy), now);
         }
         scene.tick(now);
 
-        let current = scene.bounds().and_then(|r| r.clip(vw, vh));
+        let current = scene.bounds().and_then(|r| r.clip(ow, oh));
 
         // Coming back from idle: the compositor has no cached content, so wipe the
         // whole buffer once and do a single full upload. While idle we must NOT
@@ -238,7 +279,7 @@ fn run(cfg: &Config, duration: f64) -> Result<(), Box<dyn Error>> {
 
         match Rect::union(prev_dirty, current) {
             Some(dirty) => {
-                if let Some(d) = dirty.clip(vw, vh) {
+                if let Some(d) = dirty.clip(ow, oh) {
                     clear_rect(&mut pixmap, d);
                     scene.render(&mut pixmap, now);
                     if waking {
