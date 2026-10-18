@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          mkdir dist
+          copy target\release\mouseshow.exe dist\
+          copy README.md dist\
+          copy LICENSE dist\
+          powershell -Command "Compress-Archive -Path dist/* -DestinationPath mouseshow-windows-x64.zip -Force"
+        shell: cmd
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: mouseshow-windows-x64.zip
