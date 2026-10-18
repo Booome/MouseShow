@@ -1,8 +1,8 @@
 # MouseShow
 
-**Mouse click ripples and drag trails drawn straight onto the desktop — so any screen recorder captures them, with zero timestamp drift.**
+**English** | [简体中文](README.zh-CN.md)
 
-[中文说明见下方](#中文)
+**Mouse click ripples and drag trails drawn straight onto the desktop — so any screen recorder captures them, with zero timestamp drift.**
 
 ## Why
 
@@ -100,23 +100,3 @@ Not started: tray / GUI (likely Tauri), hotkeys, cursor highlight ring, "only wh
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
----
-
-## 中文
-
-**把点击波纹和拖动轨迹直接画在桌面上，被录屏软件原样录进去 —— 所以不存在时间戳对齐问题。**
-
-- 为什么不用后期叠加：后期要先把「点击时刻」映射到「视频第几帧」，两个时钟对不齐，标记必然晚几十到几百毫秒。画在桌面上就没有这个问题。
-- 和同类工具的区别：其它工具（ClickShow、OBS Cursor Tools 等）基本只画点击波纹，**没有拖动轨迹** —— 而「我按住这里、拖到这里」恰恰是演示里最难讲清的动作。
-- 每次按下 = 一个扩散圆环，所以单击、双击、多击天然都能表现出来，也不存在判定错的可能。
-
-```bash
-mouseshow                      # 一直运行，Ctrl+C 退出
-mouseshow run --duration 600   # 录 10 分钟
-mouseshow run --color-left "#FF3B30" --no-trail
-```
-
-配置文件在 `%APPDATA%\MouseShow\config.toml`，用 `mouseshow init` 生成。
-
-实测开销（3440×1440 @ 60fps）：空闲约 2% 单核，持续拖动约 14% 单核。
