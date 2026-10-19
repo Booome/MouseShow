@@ -19,14 +19,14 @@ use tiny_skia::Pixmap;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
-    CreateDIBSection, DIB_RGB_COLORS, DeleteObject, HDC, HGDIOBJ, SelectObject,
+    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HDC, HGDIOBJ, SelectObject,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, RegisterClassW, SW_HIDE,
-    SW_SHOWNOACTIVATE, ShowWindow, ULW_ALPHA, UPDATELAYEREDWINDOWINFO, UpdateLayeredWindow,
-    UpdateLayeredWindowIndirect, WINDOW_EX_STYLE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW,
+    SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow, ULW_ALPHA, UPDATELAYEREDWINDOWINFO,
+    UpdateLayeredWindow, UpdateLayeredWindowIndirect, WINDOW_EX_STYLE, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{Result, w};
 
@@ -84,7 +84,6 @@ impl Rect {
             h: (y1 - y0) as u32,
         })
     }
-
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -198,12 +197,7 @@ impl Overlay {
             let n = r.w as usize * 4;
             let s = &src[src_off..src_off + n];
             let d = unsafe { std::slice::from_raw_parts_mut(self.bits.add(dst_off), n) };
-            for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(4)) {
-                dp[0] = sp[2];
-                dp[1] = sp[1];
-                dp[2] = sp[0];
-                dp[3] = sp[3];
-            }
+            swap_rb_copy(s, d);
         }
     }
 
@@ -311,12 +305,57 @@ impl Overlay {
     }
 }
 
+/// Copy `src` into `dst` swapping the red and blue channels: tiny-skia pixels
+/// are premultiplied RGBA, a 32bpp DIB expects premultiplied BGRA. One u32 per
+/// pixel instead of four byte loads and stores — this runs over every dirty
+/// pixel of a possibly full-screen overlay, 30+ times a second.
+fn swap_rb_copy(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len(), dst.len());
+    debug_assert_eq!(src.len() % 4, 0);
+    for (sp, dp) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+        let v = u32::from_le_bytes(sp.try_into().expect("4-byte chunk"));
+        // Little-endian RGBA packs to a<<24 | b<<16 | g<<8 | r: keep a and g,
+        // move r into bits 16..24 and b into bits 0..8.
+        let swapped = (v & 0xFF00_FF00) | ((v & 0xFF) << 16) | ((v >> 16) & 0xFF);
+        dp.copy_from_slice(&swapped.to_le_bytes());
+    }
+}
+
 impl Drop for Overlay {
     fn drop(&mut self) {
         unsafe {
+            // A bitmap selected into a DC cannot be deleted: deselect first or
+            // DeleteObject fails and the DIB leaks. Then release the DC and the
+            // window themselves.
             if !self.hbmp.is_invalid() {
+                let _ = SelectObject(self.mem_dc, HGDIOBJ::default());
                 let _ = DeleteObject(self.hbmp);
             }
+            if !self.mem_dc.is_invalid() {
+                let _ = DeleteDC(self.mem_dc);
+            }
+            if !self.hwnd.is_invalid() {
+                let _ = DestroyWindow(self.hwnd);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::swap_rb_copy;
+
+    #[test]
+    fn swap_rb_swaps_red_and_blue_per_pixel() {
+        let src = [10, 20, 30, 40, 1, 2, 3, 255];
+        let mut dst = [0u8; 8];
+        swap_rb_copy(&src, &mut dst);
+        assert_eq!(dst, [30, 20, 10, 40, 3, 2, 1, 255]);
+    }
+
+    #[test]
+    fn swap_rb_copies_empty_buffers() {
+        let mut none: [u8; 0] = [];
+        swap_rb_copy(&[], &mut none);
     }
 }

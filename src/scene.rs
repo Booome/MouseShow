@@ -68,7 +68,12 @@ pub fn parse_color(text: &str) -> Color {
     };
     match t.len() {
         6 => Color::from_rgba8(parse(t, 0, 2), parse(t, 2, 2), parse(t, 4, 2), 255),
-        8 => Color::from_rgba8(parse(t, 0, 2), parse(t, 2, 2), parse(t, 4, 2), parse(t, 6, 2)),
+        8 => Color::from_rgba8(
+            parse(t, 0, 2),
+            parse(t, 2, 2),
+            parse(t, 4, 2),
+            parse(t, 6, 2),
+        ),
         _ => Color::from_rgba8(255, 214, 0, 255),
     }
 }
@@ -156,7 +161,8 @@ impl Scene {
     /// Drop finished effects.
     pub fn tick(&mut self, now: Instant) {
         let ripple_dur = self.style.ripple_dur();
-        self.ripples.retain(|r| now.duration_since(r.born) < ripple_dur);
+        self.ripples
+            .retain(|r| now.duration_since(r.born) < ripple_dur);
 
         let tail = self.style.trail_tail();
         for slot in self.trails.iter_mut() {
@@ -215,7 +221,8 @@ impl Scene {
             let p = (now.duration_since(r.born).as_secs_f32() * 1000.0 / self.style.ripple_ms)
                 .clamp(0.0, 1.0);
             let eased = ease_out_cubic(p);
-            let radius = self.style.from_radius + (self.style.to_radius - self.style.from_radius) * eased;
+            let radius =
+                self.style.from_radius + (self.style.to_radius - self.style.from_radius) * eased;
             let alpha = (1.0 - p).powf(0.85);
 
             let mut pb = PathBuilder::new();
@@ -284,8 +291,7 @@ impl Scene {
 }
 
 fn with_alpha(c: Color, a: f32) -> Color {
-    Color::from_rgba(c.red(), c.green(), c.blue(), a.clamp(0.0, 1.0))
-        .unwrap_or(Color::TRANSPARENT)
+    Color::from_rgba(c.red(), c.green(), c.blue(), a.clamp(0.0, 1.0)).unwrap_or(Color::TRANSPARENT)
 }
 
 fn ease_out_cubic(p: f32) -> f32 {

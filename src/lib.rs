@@ -207,7 +207,11 @@ fn clear_rect(pixmap: &mut Pixmap, r: Rect) {
     }
 }
 
-fn run_loop(cfg: &Config, stop: &AtomicBool, ready: &mpsc::Sender<Result<Info, String>>) -> Result<(), String> {
+fn run_loop(
+    cfg: &Config,
+    stop: &AtomicBool,
+    ready: &mpsc::Sender<Result<Info, String>>,
+) -> Result<(), String> {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
