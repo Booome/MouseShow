@@ -73,6 +73,12 @@ impl Marks {
     /// Returns as soon as the window exists, so a caller can start recording
     /// immediately without polling for a log line.
     pub fn start(cfg: Config) -> Result<Self, MarksError> {
+        // Library callers bypass the CLI, which sanitizes right after loading.
+        // Clamp here too: an `fps: 0` config would panic the render loop
+        // (`Duration::from_secs_f32(inf)`) before it ever reports ready.
+        let mut cfg = cfg;
+        cfg.sanitize();
+
         let (tx, rx) = mpsc::channel::<Result<Info, String>>();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_inner = Arc::clone(&stop);
@@ -93,8 +99,19 @@ impl Marks {
                 handle: Some(handle),
                 info,
             }),
-            Ok(Err(e)) => Err(MarksError(e)),
-            Err(_) => Err(MarksError("timed out waiting for the overlay".into())),
+            Ok(Err(e)) => {
+                // run_loop already failed; reap the thread before reporting.
+                let _ = handle.join();
+                Err(MarksError(e))
+            }
+            Err(_) => {
+                // Timed out: the thread may still be building the overlay.
+                // Signal stop and reap it — a failed start must not leave an
+                // overlay running until the process exits.
+                stop.store(true, Ordering::Relaxed);
+                let _ = handle.join();
+                Err(MarksError("timed out waiting for the overlay".into()))
+            }
         }
     }
 
@@ -297,4 +314,25 @@ fn run_loop(
 
     ov.hide();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The render loop computes `Duration::from_secs_f32(1.0 / fps)`, which
+    /// **panics** on `inf` — so `fps: 0` must never reach it. `Marks::start`
+    /// sanitizes for library callers (the CLI does it too); this pins that
+    /// dependency so a future refactor cannot silently reintroduce the panic.
+    #[test]
+    fn a_zero_fps_is_clamped_before_the_render_loop_divides_by_it() {
+        let mut cfg = Config::default();
+        cfg.general.fps = 0;
+        cfg.sanitize();
+        assert!(cfg.general.fps >= 1, "fps was {}", cfg.general.fps);
+        assert!(
+            Duration::from_secs_f32(1.0 / cfg.general.fps as f32) > Duration::ZERO,
+            "frame duration must stay finite"
+        );
+    }
 }
