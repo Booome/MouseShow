@@ -115,7 +115,13 @@ impl Overlay {
                 lpszClassName: CLASS_NAME,
                 ..Default::default()
             };
-            RegisterClassW(&wc);
+            // A class that fails to register makes CreateWindowExW fail with
+            // a message that says nothing about the real cause.
+            if RegisterClassW(&wc) == 0 {
+                // `from_thread` reads the last error the thread produced —
+                // which is what RegisterClassW just set.
+                return Err(windows::core::Error::from_thread());
+            }
 
             let ex = WINDOW_EX_STYLE(
                 WS_EX_LAYERED.0
@@ -156,7 +162,16 @@ impl Overlay {
             };
 
             let mut bits: *mut c_void = null_mut();
-            let hbmp = CreateDIBSection(None, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
+            let hbmp = match CreateDIBSection(None, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) {
+                Ok(hbmp) => hbmp,
+                Err(e) => {
+                    // The window exists from here on: an early return that
+                    // leaves it behind leaks a topmost, click-through window
+                    // nobody can close.
+                    let _ = DestroyWindow(hwnd);
+                    return Err(e);
+                }
+            };
             let mem_dc = CreateCompatibleDC(None);
             SelectObject(mem_dc, hbmp.into());
 

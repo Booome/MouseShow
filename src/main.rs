@@ -49,15 +49,19 @@ struct Overrides {
     #[arg(short, long, global = true)]
     config: Option<PathBuf>,
 
+    /// Left-button ripple colour
     #[arg(long, global = true, value_name = "#RRGGBB")]
     color_left: Option<String>,
 
+    /// Right-button ripple colour
     #[arg(long, global = true, value_name = "#RRGGBB")]
     color_right: Option<String>,
 
+    /// Middle-button ripple colour
     #[arg(long, global = true, value_name = "#RRGGBB")]
     color_middle: Option<String>,
 
+    /// Render rate in frames per second (10–240)
     #[arg(long, global = true)]
     fps: Option<u32>,
 
@@ -65,23 +69,37 @@ struct Overrides {
     #[arg(long, global = true)]
     scale: Option<f32>,
 
+    /// Draw drag trails only, no click ripples
     #[arg(long, global = true)]
     no_ripple: bool,
 
+    /// Draw click ripples only, no drag trails
     #[arg(long, global = true)]
     no_trail: bool,
 }
 
 impl Overrides {
     fn apply(&self, cfg: &mut Config) {
+        // A colour that is not `#RRGGBB`/`#RRGGBBAA` is rejected here rather
+        // than at render time, where `parse_color` used to fall back to
+        // yellow: `--color-left red` printed nothing and drew yellow.
+        let color = |slot: &mut String, value: &str| {
+            if is_color(value) {
+                *slot = value.to_string();
+            } else {
+                eprintln!(
+                    "mouseshow: {value:?} is not a #RRGGBB or #RRGGBBAA colour — keeping the current one"
+                );
+            }
+        };
         if let Some(v) = &self.color_left {
-            cfg.colors.left = v.clone();
+            color(&mut cfg.colors.left, v);
         }
         if let Some(v) = &self.color_right {
-            cfg.colors.right = v.clone();
+            color(&mut cfg.colors.right, v);
         }
         if let Some(v) = &self.color_middle {
-            cfg.colors.middle = v.clone();
+            color(&mut cfg.colors.middle, v);
         }
         if let Some(v) = self.fps {
             cfg.general.fps = v;
@@ -96,6 +114,12 @@ impl Overrides {
             cfg.trail.enabled = false;
         }
     }
+}
+
+/// `#RRGGBB` or `#RRGGBBAA`, and nothing else.
+fn is_color(text: &str) -> bool {
+    let hex = text.strip_prefix('#').unwrap_or("");
+    (hex.len() == 6 || hex.len() == 8) && hex.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn main() {
@@ -121,10 +145,16 @@ fn main() {
             run(cfg, duration)
         }
         Some(Command::Init) => cmd_init(&cfg, &path),
-        Some(Command::Config) => {
-            print!("{}", cfg.to_toml());
-            Ok(())
-        }
+        Some(Command::Config) => match cfg.to_toml() {
+            Ok(text) => {
+                print!("{text}");
+                Ok(())
+            }
+            // A config that cannot be written back is exactly what `config`
+            // is asked to report; failing here beats printing a truncated
+            // document the user would take as the whole truth.
+            Err(e) => Err(format!("cannot serialise config: {e}").into()),
+        },
         Some(Command::Doctor) => cmd_doctor(&cfg, &path),
     };
 
@@ -163,7 +193,7 @@ fn cmd_init(cfg: &Config, path: &Path) -> Result<(), Box<dyn Error>> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    fs::write(path, cfg.to_toml())?;
+    fs::write(path, cfg.to_toml()?)?;
     println!("wrote {}", path.display());
     Ok(())
 }

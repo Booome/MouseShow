@@ -113,8 +113,11 @@ impl Config {
         }
     }
 
-    pub fn to_toml(&self) -> String {
-        toml::to_string_pretty(self).unwrap_or_else(|_| String::new())
+    /// Serialise for writing. A failure is the caller's to report: returning
+    /// an empty string used to make `init` write a 0-byte config that then
+    /// loaded as all-defaults, silently.
+    pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
+        toml::to_string_pretty(self)
     }
 
     /// Clamp values that would otherwise produce a broken render.

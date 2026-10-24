@@ -40,6 +40,12 @@ mouseshow run --duration 600
 # command-line flags override the config file for this run only
 mouseshow run --color-left "#FF3B30" --no-trail --scale 1.5
 
+# the full set of overrides (colours are #RRGGBB or #RRGGBBAA; a bad value
+# keeps the current colour and warns on stderr rather than failing the run)
+mouseshow run --config D:\elsewhere\config.toml \
+  --color-left "#FFD600" --color-right "#00C8FF" --color-middle "#FF5C8A" \
+  --fps 60 --scale 1.0 --no-ripple --no-trail
+
 # print the effective config, write a default one, or check the environment
 mouseshow config
 mouseshow init
