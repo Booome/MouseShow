@@ -16,7 +16,9 @@ use std::ffi::c_void;
 use std::ptr::null_mut;
 
 use tiny_skia::Pixmap;
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, ERROR_CLASS_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
     CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HDC, HGDIOBJ, SelectObject,
@@ -120,7 +122,16 @@ impl Overlay {
             if RegisterClassW(&wc) == 0 {
                 // `from_thread` reads the last error the thread produced —
                 // which is what RegisterClassW just set.
-                return Err(windows::core::Error::from_thread());
+                let e = windows::core::Error::from_thread();
+                // A second overlay in the same process finds the class already
+                // registered. That is not a failure: a window class belongs to
+                // the process and outlives every window created from it, and
+                // the class we collide with is ours (same name, same wndproc).
+                // Reporting it as an error made the second recording in one
+                // session die with "Class already exists" (0x80070582).
+                if e.code() != ERROR_CLASS_ALREADY_EXISTS.to_hresult() {
+                    return Err(e);
+                }
             }
 
             let ex = WINDOW_EX_STYLE(
